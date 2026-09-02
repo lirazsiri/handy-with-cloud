@@ -89,6 +89,8 @@
     }
   },
   "modelSelector": {
+    "localProvider": "Local: {{model}}",
+    "hostedProvider": "Hosted: {{service}}",
     "custom": "Custom",
     "legacy": "Legacy",
     "streaming": "Streaming",

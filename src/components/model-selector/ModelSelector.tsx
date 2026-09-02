@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/bindings";
+import { useSettings } from "@/hooks/useSettings";
 import { getTranslatedModelName } from "../../lib/utils/modelTranslation";
 import { useModelStore } from "../../stores/modelStore";
 import ModelStatusButton from "./ModelStatusButton";
@@ -25,6 +26,7 @@ interface ModelSelectorProps {
 
 const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
   const { t } = useTranslation();
+  const { getSetting } = useSettings();
   const {
     models,
     currentModel,
@@ -43,6 +45,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const displayModelId = pendingModelId || currentModel;
+  const transcriptionProvider = getSetting("transcription_provider") ?? "local";
 
   // Check model status when currentModel changes
   useEffect(() => {
@@ -217,13 +220,34 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     return modelStatus;
   };
 
+  if (transcriptionProvider === "warp_wispr") {
+    const displayText = t("modelSelector.hostedProvider", {
+      service: t("settings.general.transcriptionProvider.warpWispr"),
+    });
+
+    return (
+      <div
+        className="flex items-center gap-2"
+        title={displayText}
+        aria-label={displayText}
+      >
+        <div className="w-2 h-2 rounded-full bg-logo-primary" />
+        <span className="max-w-48 truncate">{displayText}</span>
+      </div>
+    );
+  }
+
+  const localDisplayText = t("modelSelector.localProvider", {
+    model: getModelDisplayText(),
+  });
+
   return (
     <>
       {/* Model Status and Switcher */}
       <div className="relative" ref={dropdownRef}>
         <ModelStatusButton
           status={getDisplayStatus()}
-          displayText={getModelDisplayText()}
+          displayText={localDisplayText}
           isDropdownOpen={showModelDropdown}
           onClick={() => setShowModelDropdown(!showModelDropdown)}
         />
