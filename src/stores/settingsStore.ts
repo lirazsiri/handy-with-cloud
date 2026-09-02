@@ -9,6 +9,7 @@ import type {
   TranscribeAcceleratorSetting,
   ShortcutActivation,
   VadBackend,
+  TranscriptionProvider,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { toast } from "sonner";
@@ -137,6 +138,10 @@ const settingUpdaters: {
     commands.changeTranslateToEnglishSetting(value as boolean),
   selected_language: (value) =>
     commands.changeSelectedLanguageSetting(value as string),
+  transcription_provider: (value) =>
+    commands.changeTranscriptionProviderSetting(value as TranscriptionProvider),
+  warp_credentials: (value) =>
+    commands.changeWarpCredentialsSetting(value as string),
   overlay_position: (value) =>
     commands.changeOverlayPositionSetting(value as string),
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),

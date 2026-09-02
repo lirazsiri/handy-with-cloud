@@ -8,7 +8,9 @@ use crate::managers::model::ModelManager;
 use crate::managers::transcription::policy::{live_decode, LiveDecode, ModelTraits};
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
-use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{
+    get_settings, AppSettings, OverlayStyle, TranscriptionProvider, APPLE_INTELLIGENCE_PROVIDER_ID,
+};
 use crate::shortcut;
 use crate::tray::{set_tray_state, TrayIconState};
 use crate::utils::{
@@ -394,9 +396,16 @@ impl ShortcutAction for TranscribeAction {
         let tm = app.state::<Arc<TranscriptionManager>>();
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
-        // Load ASR model and VAD model in parallel
+        let settings = get_settings(app);
+
+        // Load the local ASR model only when it owns transcription. VAD remains
+        // local for both providers so recording behavior stays unchanged.
         let kickoff_started = Instant::now();
-        tm.initiate_model_load();
+        if settings.transcription_provider == TranscriptionProvider::Local {
+            tm.initiate_model_load();
+        } else {
+            tm.cancel_stream();
+        }
         let rm_clone = Arc::clone(&rm);
         std::thread::spawn(move || {
             if let Err(e) = rm_clone.preload_vad() {
@@ -407,7 +416,8 @@ impl ShortcutAction for TranscribeAction {
 
         // Don't open the mic if nothing can transcribe the recording; the load
         // kicked off above fails and reports why.
-        if !tm.is_model_loaded() {
+        if settings.transcription_provider == TranscriptionProvider::Local && !tm.is_model_loaded()
+        {
             let selected_model = get_settings(app).selected_model;
             if let Err(e) = app
                 .state::<Arc<ModelManager>>()
@@ -425,7 +435,6 @@ impl ShortcutAction for TranscribeAction {
 
         // Get the microphone mode to determine audio feedback timing
         let plan_started = Instant::now();
-        let settings = get_settings(app);
         let is_always_on = settings.always_on_microphone;
 
         let selected_model_info = app
@@ -435,10 +444,12 @@ impl ShortcutAction for TranscribeAction {
         // Use the app-facing model capability as the single pre-recording source
         // for live streaming decisions. Unknown support is represented as false
         // until the model registry is updated by discovery or runtime load.
-        let model_supports_streaming = selected_model_info
-            .as_ref()
-            .map(|m| m.supports_streaming)
-            .unwrap_or(false);
+        let model_supports_streaming = settings.transcription_provider
+            == TranscriptionProvider::Local
+            && selected_model_info
+                .as_ref()
+                .map(|m| m.supports_streaming)
+                .unwrap_or(false);
         let vad_policy = if !settings.vad_enabled {
             VadPolicy::Disabled
         } else if model_supports_streaming {
@@ -453,7 +464,9 @@ impl ShortcutAction for TranscribeAction {
             streaming: model_supports_streaming,
             long_form: false,
         };
-        if live_decode(expected_model, settings.long_form_chunking) != LiveDecode::None {
+        if settings.transcription_provider == TranscriptionProvider::Local
+            && live_decode(expected_model, settings.long_form_chunking) != LiveDecode::None
+        {
             tm.start_stream();
         }
         let plan_elapsed = plan_started.elapsed();
@@ -650,7 +663,22 @@ impl ShortcutAction for TranscribeAction {
                     // otherwise a batch run of the samples. A cancel is surfaced
                     // as an error, so it never starts a batch run.
                     let transcription_time = Instant::now();
-                    let transcription_result = tm.transcribe_recording(samples);
+                    let transcription_settings = get_settings(&ah);
+                    let transcription_result = match transcription_settings.transcription_provider {
+                        TranscriptionProvider::WarpWispr => {
+                            tm.cancel_stream();
+                            crate::warp_transcription::transcribe(
+                                &samples,
+                                transcription_settings.warp_credentials.expose(),
+                                &transcription_settings.selected_language,
+                            )
+                            .await
+                        }
+                        TranscriptionProvider::Local => {
+                            tm.initiate_model_load();
+                            tm.transcribe_recording(samples)
+                        }
+                    };
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {

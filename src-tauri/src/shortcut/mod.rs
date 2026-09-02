@@ -24,7 +24,8 @@ use crate::settings::APPLE_INTELLIGENCE_DEFAULT_MODEL_ID;
 use crate::settings::{
     self, get_settings, AutoSubmitKey, ChineseScript, ClipboardHandling, KeyboardImplementation,
     LLMPrompt, OverlayPosition, OverlayStyle, PasteMethod, ShortcutActivation, ShortcutBinding,
-    SoundTheme, Theme, TypingTool, VadBackend, APPLE_INTELLIGENCE_PROVIDER_ID,
+    SoundTheme, Theme, TranscriptionProvider, TypingTool, VadBackend,
+    APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
 
@@ -691,6 +692,27 @@ pub fn change_translate_to_english_setting(app: AppHandle, enabled: bool) -> Res
 pub fn change_selected_language_setting(app: AppHandle, language: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.selected_language = language;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_transcription_provider_setting(
+    app: AppHandle,
+    provider: TranscriptionProvider,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.transcription_provider = provider;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_warp_credentials_setting(app: AppHandle, credentials: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.warp_credentials = settings::SecretString::from(credentials);
     settings::write_settings(&app, settings);
     Ok(())
 }

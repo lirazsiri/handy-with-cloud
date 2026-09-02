@@ -125,6 +125,16 @@
     },
     "general": {
       "title": "General",
+      "transcriptionProvider": {
+        "groupTitle": "Transcription",
+        "title": "Speech-to-text provider",
+        "description": "Choose local inference or the Wispr service included with your Warp Terminal subscription.",
+        "local": "Local model",
+        "warpWispr": "Warp Wispr",
+        "credentialsTitle": "Warp Terminal credentials",
+        "credentialsDescription": "Paste the complete PersistedUser JSON from Warp Terminal. Handy uses its refresh token to authenticate each transcription.",
+        "credentialsPlaceholder": "Paste Warp PersistedUser JSON"
+      },
       "shortcut": {
         "title": "Handy Shortcuts",
         "description": "Configure keyboard shortcuts to trigger speech-to-text recording",
