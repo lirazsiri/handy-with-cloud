@@ -710,9 +710,12 @@ pub fn change_transcription_provider_setting(
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_warp_credentials_setting(app: AppHandle, credentials: String) -> Result<(), String> {
+pub fn change_warp_credentials_file_setting(
+    app: AppHandle,
+    credentials_file: String,
+) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
-    settings.warp_credentials = settings::SecretString::from(credentials);
+    settings.warp_credentials_file = credentials_file;
     settings::write_settings(&app, settings);
     Ok(())
 }

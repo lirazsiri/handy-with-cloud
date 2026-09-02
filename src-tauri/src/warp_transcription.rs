@@ -3,13 +3,26 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use reqwest::{redirect::Policy, Client, StatusCode};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use specta::Type;
+use std::fs;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+use tauri::AppHandle;
 
 const FIREBASE_TOKEN_URL: &str = match option_env!("HANDY_WARP_FIREBASE_TOKEN_URL") {
     Some(value) => value,
     None => "",
 };
 const WARP_TRANSCRIBE_URL: &str = "https://app.warp.dev/ai/transcribe";
+const MAX_CREDENTIAL_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug, Serialize, Type)]
+pub struct WarpWisprStatus {
+    active: bool,
+    credential_source: String,
+    latency_ms: u64,
+}
 
 #[derive(Debug, Deserialize)]
 struct PersistedUser {
@@ -49,12 +62,13 @@ struct Endpoints<'a> {
 
 pub(crate) async fn transcribe(
     samples: &[f32],
-    persisted_user_json: &str,
+    credentials_file: &str,
     language: &str,
 ) -> Result<String> {
+    let (persisted_user_json, _) = load_persisted_user(credentials_file)?;
     transcribe_with_endpoints(
         samples,
-        persisted_user_json,
+        &persisted_user_json,
         language,
         Endpoints {
             token: FIREBASE_TOKEN_URL,
@@ -62,6 +76,82 @@ pub(crate) async fn transcribe(
         },
     )
     .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn check_warp_wispr_status(
+    _app: AppHandle,
+    credentials_file: String,
+) -> Result<WarpWisprStatus, String> {
+    let started = Instant::now();
+    let (persisted_user_json, credential_source) =
+        load_persisted_user(&credentials_file).map_err(|error| error.to_string())?;
+    transcribe_with_endpoints(
+        &[0.0; 4_000],
+        &persisted_user_json,
+        "auto",
+        Endpoints {
+            token: FIREBASE_TOKEN_URL,
+            transcribe: WARP_TRANSCRIBE_URL,
+        },
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(WarpWisprStatus {
+        active: true,
+        credential_source,
+        latency_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+    })
+}
+
+fn load_persisted_user(credentials_file: &str) -> Result<(String, String)> {
+    let credentials_file = credentials_file.trim();
+    if credentials_file.is_empty() {
+        return load_from_secret_service().map(|value| (value, "secret_service".to_string()));
+    }
+    load_from_file(Path::new(credentials_file)).map(|value| (value, "file".to_string()))
+}
+
+fn load_from_secret_service() -> Result<String> {
+    let mut output = Command::new("secret-tool")
+        .args(["lookup", "service", "dev.warp.Warp", "key", "User"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .context("could not run secret-tool; configure a credentials file fallback")?;
+    if !output.status.success() || output.stdout.is_empty() {
+        bail!(
+            "Warp credentials were not found in Secret Service; configure a credentials file fallback"
+        );
+    }
+    if output.stdout.len() as u64 > MAX_CREDENTIAL_BYTES + 1 {
+        bail!("Warp credentials exceed the size limit");
+    }
+    if output.stdout.last() == Some(&b'\n') {
+        output.stdout.pop();
+    }
+    String::from_utf8(output.stdout)
+        .context("Warp credentials from Secret Service were not valid UTF-8")
+}
+
+fn load_from_file(path: &Path) -> Result<String> {
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("could not read Warp credentials file {}", path.display()))?;
+    if !metadata.is_file() {
+        bail!("Warp credentials path is not a regular file");
+    }
+    if metadata.len() > MAX_CREDENTIAL_BYTES {
+        bail!("Warp credentials file exceeds the size limit");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            bail!("Warp credentials file must not be group or world accessible");
+        }
+    }
+    fs::read_to_string(path).context("Warp credentials file was not valid UTF-8")
 }
 
 async fn transcribe_with_endpoints(
@@ -186,7 +276,10 @@ fn encode_pcm16_wav(samples: &[f32]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_pcm16_wav, extract_refresh_token, transcribe_with_endpoints, Endpoints};
+    use super::{
+        encode_pcm16_wav, extract_refresh_token, load_persisted_user, transcribe_with_endpoints,
+        Endpoints,
+    };
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -212,6 +305,21 @@ mod tests {
         assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 16_000);
         assert_eq!(u16::from_le_bytes([wav[34], wav[35]]), 16);
         assert_eq!(wav.len(), 50);
+    }
+
+    #[test]
+    fn explicit_credentials_file_is_the_only_file_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("warp.json");
+        std::fs::write(&path, r#"{"id_token":{"refresh_token":"from-file"}}"#).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let (credentials, source) = load_persisted_user(path.to_str().unwrap()).unwrap();
+        assert!(credentials.contains("from-file"));
+        assert_eq!(source, "file");
     }
 
     #[test]

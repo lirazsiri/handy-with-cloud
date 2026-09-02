@@ -131,9 +131,14 @@
         "description": "Choose local inference or the Wispr service included with your Warp Terminal subscription.",
         "local": "Local model",
         "warpWispr": "Warp Wispr",
-        "credentialsTitle": "Warp Terminal credentials",
-        "credentialsDescription": "Paste the complete PersistedUser JSON from Warp Terminal. Handy uses its refresh token to authenticate each transcription.",
-        "credentialsPlaceholder": "Paste Warp PersistedUser JSON"
+        "credentialsFileTitle": "Warp credential source",
+        "credentialsFileDescription": "Handy reads Warp's Secret Service key by default. Enter a PersistedUser JSON file path only as a fallback.",
+        "credentialsFilePlaceholder": "Blank uses Warp Secret Service",
+        "checkConnection": "Test Warp API",
+        "checking": "Testing Warp API...",
+        "active": "Warp API active via {{source}} ({{latency}} ms)",
+        "secretService": "Secret Service",
+        "credentialsFile": "credentials file"
       },
       "shortcut": {
         "title": "Handy Shortcuts",

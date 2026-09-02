@@ -669,7 +669,7 @@ impl ShortcutAction for TranscribeAction {
                             tm.cancel_stream();
                             crate::warp_transcription::transcribe(
                                 &samples,
-                                transcription_settings.warp_credentials.expose(),
+                                &transcription_settings.warp_credentials_file,
                                 &transcription_settings.selected_language,
                             )
                             .await

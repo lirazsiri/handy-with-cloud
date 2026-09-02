@@ -347,32 +347,6 @@ pub enum TranscriptionProvider {
     WarpWispr,
 }
 
-#[derive(Clone, Serialize, Deserialize, Type, Default)]
-#[serde(transparent)]
-pub struct SecretString(String);
-
-impl SecretString {
-    pub(crate) fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<String> for SecretString {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl fmt::Debug for SecretString {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.is_empty() {
-            f.write_str("")
-        } else {
-            f.write_str("[REDACTED]")
-        }
-    }
-}
-
 #[derive(Clone, Serialize, Deserialize, Type)]
 #[serde(transparent)]
 pub(crate) struct SecretMap(HashMap<String, String>);
@@ -451,8 +425,10 @@ pub struct AppSettings {
     pub selected_model: String,
     #[serde(default)]
     pub transcription_provider: TranscriptionProvider,
+    /// Optional fallback path to an exported Warp PersistedUser JSON file.
+    /// Empty means to read Warp's native Secret Service item at request time.
     #[serde(default)]
-    pub warp_credentials: SecretString,
+    pub warp_credentials_file: String,
     #[serde(default)]
     pub onboarding_completed: bool,
     #[serde(default = "default_always_on_microphone")]
@@ -1011,7 +987,7 @@ pub fn get_default_settings() -> AppSettings {
         whats_new_last_seen_version: default_whats_new_last_seen_version(),
         selected_model: "".to_string(),
         transcription_provider: TranscriptionProvider::default(),
-        warp_credentials: SecretString::default(),
+        warp_credentials_file: String::new(),
         onboarding_completed: false,
         always_on_microphone: false,
         selected_microphone: None,
@@ -1119,6 +1095,12 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
                     (salvage_settings(&settings_value), true)
                 }
             };
+
+        // The first Warp prototype persisted the complete PersistedUser JSON.
+        // Rewriting the typed settings removes that obsolete secret immediately.
+        if settings_value.get("warp_credentials").is_some() {
+            updated = true;
+        }
 
         if apply_settings_migrations(&mut settings, &settings_value) {
             updated = true;
@@ -1854,11 +1836,8 @@ mod tests {
     }
 
     #[test]
-    fn debug_output_redacts_credentials() {
+    fn debug_output_redacts_api_keys() {
         let mut settings = get_default_settings();
-        settings.warp_credentials = SecretString::from(
-            r#"{"id_token":{"refresh_token":"warp-refresh-secret"}}"#.to_string(),
-        );
         settings
             .post_process_api_keys
             .insert("openai".to_string(), "sk-proj-secret-key-12345".to_string());
@@ -1874,8 +1853,22 @@ mod tests {
 
         assert!(!debug_output.contains("sk-proj-secret-key-12345"));
         assert!(!debug_output.contains("sk-ant-secret-key-67890"));
-        assert!(!debug_output.contains("warp-refresh-secret"));
         assert!(debug_output.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn legacy_warp_credentials_are_removed_by_typed_rewrite() {
+        let stored = serde_json::json!({
+            "warp_credentials": "legacy-persisted-user-secret"
+        });
+        let settings: AppSettings = serde_json::from_value(stored).unwrap();
+        let rewritten = serde_json::to_value(settings).unwrap();
+
+        assert!(rewritten.get("warp_credentials").is_none());
+        assert_eq!(rewritten["warp_credentials_file"], "");
+        assert!(!rewritten
+            .to_string()
+            .contains("legacy-persisted-user-secret"));
     }
 
     #[test]

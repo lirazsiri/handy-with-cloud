@@ -86,7 +86,7 @@ pub async fn retry_history_entry_transcription(
     let transcription = match settings.transcription_provider {
         TranscriptionProvider::WarpWispr => crate::warp_transcription::transcribe(
             &samples,
-            settings.warp_credentials.expose(),
+            &settings.warp_credentials_file,
             &settings.selected_language,
         )
         .await

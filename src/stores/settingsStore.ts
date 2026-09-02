@@ -140,8 +140,8 @@ const settingUpdaters: {
     commands.changeSelectedLanguageSetting(value as string),
   transcription_provider: (value) =>
     commands.changeTranscriptionProviderSetting(value as TranscriptionProvider),
-  warp_credentials: (value) =>
-    commands.changeWarpCredentialsSetting(value as string),
+  warp_credentials_file: (value) =>
+    commands.changeWarpCredentialsFileSetting(value as string),
   overlay_position: (value) =>
     commands.changeOverlayPositionSetting(value as string),
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),

@@ -109,9 +109,17 @@ async changeTranscriptionProviderSetting(provider: TranscriptionProvider) : Prom
     else return { status: "error", error: e  as any };
 }
 },
-async changeWarpCredentialsSetting(credentials: string) : Promise<Result<null, string>> {
+async changeWarpCredentialsFileSetting(credentialsFile: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_warp_credentials_setting", { credentials }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_warp_credentials_file_setting", { credentialsFile }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async checkWarpWisprStatus(credentialsFile: string) : Promise<Result<WarpWisprStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_warp_wispr_status", { credentialsFile }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1020,7 +1028,12 @@ hold_threshold_ms?: number; audio_feedback?: boolean; audio_feedback_volume?: nu
  * upgrading from before this key existed are blanked by the migration so they
  * see the current release's notes — see `apply_settings_migrations`.
  */
-whats_new_last_seen_version?: string; selected_model?: string; transcription_provider?: TranscriptionProvider; warp_credentials?: SecretString; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null;
+whats_new_last_seen_version?: string; selected_model?: string; transcription_provider?: TranscriptionProvider;
+/**
+ * Optional fallback path to an exported Warp PersistedUser JSON file.
+ * Empty means to read Warp's native Secret Service item at request time.
+ */
+warp_credentials_file?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null;
 /**
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
@@ -1151,7 +1164,6 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
  */
 export type RetiredModel = { id: string; name: string; size_mb: number; replacement_repo: string }
 export type SecretMap = Partial<{ [key in string]: string }>
-export type SecretString = string
 export type SecureInputStatus = { 
 /**
  * Secure input is currently enabled (live check)
@@ -1245,6 +1257,7 @@ export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TranscriptionProvider = "local" | "warp_wispr"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type VadBackend = "silero" | "earshot"
+export type WarpWisprStatus = { active: boolean; credential_source: string; latency_ms: number }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/
