@@ -101,6 +101,18 @@ bun run tauri build
 
 This compiles a release binary and generates platform-specific bundles (deb, rpm, AppImage on Linux; dmg on macOS; msi on Windows).
 
+For a local unsigned Linux AppImage, use the same graphics-library exclusions as CI:
+
+```bash
+LINUXDEPLOY_EXCLUDED_LIBRARIES='libvulkan.so*;libwayland-client.so*' \
+  bun run tauri build --bundles appimage --no-sign \
+  --config '{"bundle":{"createUpdaterArtifacts":false}}'
+```
+
+Vulkan and Wayland client libraries come from the host so they match its graphics drivers.
+The locked Tauri CLI includes the AppImage packaging fix needed for newer Mesa releases,
+including Ubuntu 26.04.
+
 ## Linux Install (from source)
 
 The raw binary (`src-tauri/target/release/handy`) cannot run standalone — it needs Tauri resource files (tray icons, sounds, VAD model) to be co-located at the expected path.

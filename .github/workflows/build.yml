@@ -424,28 +424,6 @@ jobs:
           sudo cp -vL "$LIBDIR"/libtranscribe.so* "$LIBDIR"/libggml*.so* /usr/local/lib/ 2>/dev/null || true
           sudo ldconfig
 
-      # Tauri's mirrored 2024 linuxdeploy predates support for the
-      # LINUXDEPLOY_EXCLUDED_LIBRARIES environment variable. Put a current
-      # upstream build in Tauri's tool cache so the exclusions on the build step
-      # are applied while constructing the original, signed AppImage.
-      - name: Install linuxdeploy with library exclusion support
-        if: contains(inputs.platform, 'ubuntu') && contains(inputs.build-args, 'appimage')
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "$(uname -m)" in
-            x86_64) arch="x86_64" ;;
-            aarch64|arm64) arch="aarch64" ;;
-            *) echo "Unsupported linuxdeploy architecture: $(uname -m)" >&2; exit 1 ;;
-          esac
-          tools_dir="${XDG_CACHE_HOME:-$HOME/.cache}/tauri"
-          mkdir -p "$tools_dir"
-          curl -L --fail --show-error --retry 3 \
-            -o "$tools_dir/linuxdeploy-${arch}.AppImage" \
-            "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${arch}.AppImage"
-          chmod +x "$tools_dir/linuxdeploy-${arch}.AppImage"
-          "$tools_dir/linuxdeploy-${arch}.AppImage" --appimage-extract-and-run --version
-
       - name: Build with Tauri
         uses: tauri-apps/tauri-action@v0
         env:
@@ -573,9 +551,14 @@ jobs:
             if [ -n "$vulkan_icd" ]; then
               export VK_ICD_FILENAMES="$vulkan_icd"
             fi
+            local executable="${root}/usr/bin/handy"
+            if [ "$label" = "AppImage" ]; then
+              # Exercise the packaged GTK/GIO hooks and launcher environment too.
+              executable="${root}/AppRun"
+            fi
             HANDY_NO_GTK_LAYER_SHELL=1 \
             LD_LIBRARY_PATH="${root}/usr/lib/Handy:${root}/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-              xvfb-run -a "${root}/usr/bin/handy" --list-devices \
+              xvfb-run -a "$executable" --list-devices \
                 >/tmp/handy-package-smoke.log 2>&1
             echo "${label} --list-devices smoke passed"
           }
