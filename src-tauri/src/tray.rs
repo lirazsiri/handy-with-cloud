@@ -59,6 +59,7 @@ struct MenuInputs {
     warning: bool,
     model_loaded: bool,
     selected_model: String,
+    transcription_provider: settings::TranscriptionProvider,
     /// `(id, name)` of downloaded models, sorted by name.
     downloaded_models: Vec<(String, String)>,
     locale: String,
@@ -331,10 +332,22 @@ fn compute_desired(app: &AppHandle, icon_state: TrayIconState) -> TrayDesired {
             warning,
             model_loaded,
             selected_model: settings.selected_model,
+            transcription_provider: settings.transcription_provider,
             downloaded_models,
             locale: settings.app_language,
             update_checks_enabled: settings.update_checks_enabled,
         },
+    }
+}
+
+fn hosted_provider_name(provider: settings::TranscriptionProvider) -> Option<&'static str> {
+    use settings::TranscriptionProvider;
+    match provider {
+        TranscriptionProvider::Local => None,
+        TranscriptionProvider::WarpWispr => Some("Warp Wispr"),
+        TranscriptionProvider::WisprFlow => Some("Wispr Flow"),
+        TranscriptionProvider::Cartesia => Some("Cartesia"),
+        TranscriptionProvider::ElevenLabs => Some("ElevenLabs"),
     }
 }
 
@@ -530,46 +543,65 @@ fn build_menu(app: &AppHandle, inputs: &MenuInputs) -> tauri::Result<(Menu<tauri
             ],
         )?
     } else {
-        // Build model submenu — label is the active model name
-        let submenu_label = inputs
-            .downloaded_models
-            .iter()
-            .find(|(id, _)| *id == inputs.selected_model)
-            .map(|(_, name)| name.clone())
-            .unwrap_or_else(|| strings.model.clone());
-
-        let model_submenu = Submenu::with_id(app, "model_submenu", &submenu_label, true)?;
-        for (id, name) in &inputs.downloaded_models {
-            let is_active = *id == inputs.selected_model;
-            let item_id = format!("model_select:{}", id);
-            let item = CheckMenuItem::with_id(app, &item_id, name, true, is_active, None::<&str>)?;
-            model_submenu.append(&item)?;
-        }
-
-        let unload_model_i = MenuItem::with_id(
-            app,
-            "unload_model",
-            &strings.unload_model,
-            inputs.model_loaded,
-            None::<&str>,
-        )?;
-
-        Menu::with_items(
+        let menu = Menu::with_items(
             app,
             &[
                 &version_i,
                 &separator()?,
                 &copy_last_transcript_i,
                 &separator()?,
-                &model_submenu,
-                &unload_model_i,
-                &separator()?,
-                &settings_i,
-                &check_updates_i,
-                &separator()?,
-                &quit_i,
             ],
-        )?
+        )?;
+        if let Some(provider) = hosted_provider_name(inputs.transcription_provider) {
+            let template = if strings.hosted_provider.is_empty() {
+                get_tray_translations(Some("en".to_string())).hosted_provider
+            } else {
+                strings.hosted_provider.clone()
+            };
+            let label = template.replace("{{provider}}", provider);
+            menu.append(&MenuItem::with_id(
+                app,
+                "transcription_service",
+                label,
+                false,
+                None::<&str>,
+            )?)?;
+        } else {
+            // Label the local model submenu with the active model name.
+            let submenu_label = inputs
+                .downloaded_models
+                .iter()
+                .find(|(id, _)| *id == inputs.selected_model)
+                .map(|(_, name)| name.clone())
+                .unwrap_or_else(|| strings.model.clone());
+
+            let model_submenu = Submenu::with_id(app, "model_submenu", &submenu_label, true)?;
+            for (id, name) in &inputs.downloaded_models {
+                let is_active = *id == inputs.selected_model;
+                let item_id = format!("model_select:{}", id);
+                let item =
+                    CheckMenuItem::with_id(app, &item_id, name, true, is_active, None::<&str>)?;
+                model_submenu.append(&item)?;
+            }
+
+            let unload_model_i = MenuItem::with_id(
+                app,
+                "unload_model",
+                &strings.unload_model,
+                inputs.model_loaded,
+                None::<&str>,
+            )?;
+            menu.append(&model_submenu)?;
+            menu.append(&unload_model_i)?;
+        }
+        menu.append_items(&[
+            &separator()?,
+            &settings_i,
+            &check_updates_i,
+            &separator()?,
+            &quit_i,
+        ])?;
+        menu
     };
 
     // When update checks are forced off (e.g. HANDY_DISABLE_UPDATER, set by
@@ -668,8 +700,10 @@ pub fn copy_last_transcript(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    use super::hosted_provider_name;
     use super::{last_transcript_text, load_tray_icon, MenuInputs, TrayDesired, TrayIconState};
     use crate::managers::history::HistoryEntry;
+    use crate::settings;
 
     fn build_entry(transcription: &str, post_processed: Option<&str>) -> HistoryEntry {
         HistoryEntry {
@@ -691,6 +725,7 @@ mod tests {
             warning: false,
             model_loaded: true,
             selected_model: "small".to_string(),
+            transcription_provider: settings::TranscriptionProvider::Local,
             downloaded_models: vec![("small".to_string(), "Small".to_string())],
             locale: "en".to_string(),
             update_checks_enabled: true,
@@ -735,6 +770,28 @@ mod tests {
         };
         assert_ne!(recording.icon_path, transcribing.icon_path);
         assert_eq!(recording.menu, transcribing.menu);
+    }
+
+    #[test]
+    fn changing_transcription_service_invalidates_the_menu() {
+        let local = inputs(false);
+        let mut hosted = local.clone();
+        hosted.transcription_provider = settings::TranscriptionProvider::WisprFlow;
+        assert_ne!(local, hosted);
+    }
+
+    #[test]
+    fn hosted_services_replace_the_local_model_label() {
+        use settings::TranscriptionProvider;
+        assert_eq!(hosted_provider_name(TranscriptionProvider::Local), None);
+        for (provider, name) in [
+            (TranscriptionProvider::WarpWispr, "Warp Wispr"),
+            (TranscriptionProvider::WisprFlow, "Wispr Flow"),
+            (TranscriptionProvider::Cartesia, "Cartesia"),
+            (TranscriptionProvider::ElevenLabs, "ElevenLabs"),
+        ] {
+            assert_eq!(hosted_provider_name(provider), Some(name));
+        }
     }
 
     #[test]

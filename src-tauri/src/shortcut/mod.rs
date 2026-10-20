@@ -705,6 +705,7 @@ pub fn change_transcription_provider_setting(
     let mut settings = settings::get_settings(&app);
     settings.transcription_provider = provider;
     settings::write_settings(&app, settings);
+    crate::tray::update_tray_menu(&app);
     Ok(())
 }
 
