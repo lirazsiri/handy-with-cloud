@@ -50,6 +50,20 @@ impl Drop for FinishGuard {
     }
 }
 
+fn should_start_recording_stream(
+    provider: TranscriptionProvider,
+    model: ModelTraits,
+    long_form_chunking: bool,
+) -> bool {
+    match provider {
+        TranscriptionProvider::Local => live_decode(model, long_form_chunking) != LiveDecode::None,
+        TranscriptionProvider::WarpWispr => false,
+        TranscriptionProvider::WisprFlow
+        | TranscriptionProvider::Cartesia
+        | TranscriptionProvider::ElevenLabs => true,
+    }
+}
+
 // Shortcut Action Trait
 pub trait ShortcutAction: Send + Sync {
     fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str);
@@ -466,10 +480,11 @@ impl ShortcutAction for TranscribeAction {
             streaming: model_supports_streaming,
             long_form: false,
         };
-        if crate::cloud_transcription::CloudSttProvider::from_settings(&settings).is_some()
-            || settings.transcription_provider == TranscriptionProvider::Local
-                && live_decode(expected_model, settings.long_form_chunking) != LiveDecode::None
-        {
+        if should_start_recording_stream(
+            settings.transcription_provider,
+            expected_model,
+            settings.long_form_chunking,
+        ) {
             tm.start_stream();
         }
         let plan_elapsed = plan_started.elapsed();
@@ -680,7 +695,7 @@ impl ShortcutAction for TranscribeAction {
                         TranscriptionProvider::Cartesia
                         | TranscriptionProvider::ElevenLabs
                         | TranscriptionProvider::WisprFlow => {
-                            tm.finalize_stream().and_then(|text| {
+                            tm.finalize_cloud_stream().and_then(|text| {
                                 text.ok_or_else(|| {
                                     anyhow::anyhow!(
                                     "Cloud transcription stream is unavailable; please record again"
@@ -918,8 +933,8 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 #[cfg(test)]
 mod tests {
     use super::{
-        complete_unless_cancelled, is_blank_transcription, should_use_streaming_overlay,
-        strip_think_block,
+        complete_unless_cancelled, is_blank_transcription, should_start_recording_stream,
+        should_use_streaming_overlay, strip_think_block,
     };
     use crate::settings::OverlayStyle;
     use std::future;
@@ -927,6 +942,44 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn hosted_streams_start_without_a_local_model() {
+        use crate::managers::transcription::policy::ModelTraits;
+        use crate::settings::TranscriptionProvider::*;
+        let no_model = ModelTraits {
+            streaming: false,
+            long_form: false,
+        };
+        for provider in [WisprFlow, Cartesia, ElevenLabs] {
+            for chunking in [false, true] {
+                assert!(should_start_recording_stream(provider, no_model, chunking));
+            }
+        }
+        assert!(!should_start_recording_stream(WarpWispr, no_model, true));
+    }
+
+    #[test]
+    fn local_recordings_keep_upstream_live_decode_policy() {
+        use crate::managers::transcription::policy::ModelTraits;
+        use crate::settings::TranscriptionProvider::Local;
+        let batch = ModelTraits {
+            streaming: false,
+            long_form: false,
+        };
+        let streaming = ModelTraits {
+            streaming: true,
+            long_form: false,
+        };
+        let long_form = ModelTraits {
+            streaming: false,
+            long_form: true,
+        };
+        assert!(!should_start_recording_stream(Local, batch, false));
+        assert!(should_start_recording_stream(Local, batch, true));
+        assert!(should_start_recording_stream(Local, streaming, false));
+        assert!(!should_start_recording_stream(Local, long_form, true));
+    }
 
     #[test]
     fn blank_transcription_is_detected() {

@@ -96,9 +96,6 @@ pub struct StreamPhaseEvent {
     pub kind: Option<StreamWorkKind>,
 }
 
-/// Commands sent to the streaming worker thread. Audio frames and the finalize
-/// request travel the same channel so FIFO ordering guarantees every fed frame
-/// is processed before finalize runs.
 type StreamReply = mpsc::Sender<std::result::Result<Option<FinalizedStreamText>, String>>;
 struct FinalizedStreamText {
     text: String,
@@ -107,6 +104,9 @@ struct FinalizedStreamText {
     supported_languages: Vec<String>,
 }
 
+/// Commands sent to the streaming worker thread. Audio frames and the finalize
+/// request travel the same channel so FIFO ordering guarantees every fed frame
+/// is processed before finalize runs.
 enum StreamCmd {
     Feed(Vec<f32>),
     /// Flush the live decode and reply with what it decoded, or `None` if
@@ -729,17 +729,7 @@ impl TranscriptionManager {
         Arc::clone(&self.router)
     }
 
-    /// Begin a recording's live decode on the held engine's session. Audio
-    /// frames pushed via [`StreamRouter::feed`] (captured directly by the
-    /// audio recorder) are streamed, with preview text emitted to the overlay
-    /// as [`StreamTextEvent`], or cut into long-form chunks decoded as the
-    /// recording goes; [`policy::live_decode`] picks which.
-    ///
-    /// Non-blocking: spawns a worker that waits for any in-progress model load,
-    /// then begins the live decode the loaded model calls for. With none, the
-    /// worker idles until finalize/cancel and reports `None` so the caller
-    /// falls back to batch transcription. Frames sent before the decode begins
-    /// queue on the channel and are not lost.
+    /// Transcribe a saved recording with the selected hosted streaming service.
     pub fn transcribe_cloud_recording(&self, samples: Vec<f32>) -> Result<String> {
         let (tx, rx) = mpsc::channel();
         for chunk in samples.chunks(1600) {
@@ -749,11 +739,11 @@ impl TranscriptionManager {
         tx.send(StreamCmd::CloudFinalize(reply_tx))?;
         let settings = get_settings(&self.app_handle);
         if settings.transcription_provider == TranscriptionProvider::WisprFlow {
-            self.run_wispr_stream_worker(&rx)?;
+            self.run_wispr_stream_worker(&rx, &AtomicBool::new(false))?;
         } else {
             let provider = CloudSttProvider::from_settings(&settings)
                 .ok_or_else(|| anyhow::anyhow!("No cloud provider selected"))?;
-            self.run_cloud_stream_worker(&rx, provider)?;
+            self.run_cloud_stream_worker(&rx, provider, &AtomicBool::new(false))?;
         }
         let result = reply_rx
             .recv()?
@@ -768,7 +758,8 @@ impl TranscriptionManager {
         ))
     }
 
-    pub fn finalize_stream(&self) -> Result<Option<String>> {
+    /// Flush the hosted stream and apply the shared text filters.
+    pub fn finalize_cloud_stream(&self) -> Result<Option<String>> {
         let Some(route) = self.router.take() else {
             return Ok(None);
         };
@@ -805,6 +796,17 @@ impl TranscriptionManager {
         Ok(Some(filtered))
     }
 
+    /// Begin a recording's live decode on the held engine's session. Audio
+    /// frames pushed via [`StreamRouter::feed`] (captured directly by the
+    /// audio recorder) are streamed, with preview text emitted to the overlay
+    /// as [`StreamTextEvent`], or cut into long-form chunks decoded as the
+    /// recording goes; [`policy::live_decode`] picks which.
+    ///
+    /// Non-blocking: spawns a worker that waits for any in-progress model load,
+    /// then begins the live decode the loaded model calls for. With none, the
+    /// worker idles until finalize/cancel and reports `None` so the caller
+    /// falls back to batch transcription. Frames sent before the decode begins
+    /// queue on the channel and are not lost.
     pub fn start_stream(&self) {
         if self.router.is_open() || self.active_stream_worker.load(Ordering::Acquire) != 0 {
             warn!("start_stream called while a stream worker is already active");
@@ -899,6 +901,7 @@ impl TranscriptionManager {
         &self,
         rx: &mpsc::Receiver<StreamCmd>,
         provider: CloudSttProvider,
+        cancelled: &AtomicBool,
     ) -> Result<()> {
         let settings = get_settings(&self.app_handle);
         let key = provider.api_key(&self.app_handle)?;
@@ -917,6 +920,9 @@ impl TranscriptionManager {
         while let Ok(command) = rx.recv() {
             match command {
                 StreamCmd::Feed(pcm) => {
+                    if cancelled.load(Ordering::Acquire) {
+                        continue;
+                    }
                     samples_sent += pcm.len();
                     cloud_send_audio(&mut socket, provider, &pcm)?;
                     if matches!(provider, CloudSttProvider::ElevenLabs)
@@ -1038,7 +1044,11 @@ impl TranscriptionManager {
         Ok(())
     }
 
-    fn run_wispr_stream_worker(&self, rx: &mpsc::Receiver<StreamCmd>) -> Result<()> {
+    fn run_wispr_stream_worker(
+        &self,
+        rx: &mpsc::Receiver<StreamCmd>,
+        cancelled: &AtomicBool,
+    ) -> Result<()> {
         let settings = get_settings(&self.app_handle);
         tauri::async_runtime::block_on(async {
             let credential = crate::wispr_flow::credential(&self.app_handle).await?;
@@ -1050,7 +1060,11 @@ impl TranscriptionManager {
             .await?;
             loop {
                 match rx.try_recv() {
-                    Ok(StreamCmd::Feed(samples)) => session.feed(&samples)?,
+                    Ok(StreamCmd::Feed(samples)) => {
+                        if !cancelled.load(Ordering::Acquire) {
+                            session.feed(&samples)?;
+                        }
+                    }
                     Ok(StreamCmd::CloudFinalize(reply)) => {
                         let result = session
                             .finish(|committed, tentative| {
@@ -1106,11 +1120,11 @@ impl TranscriptionManager {
         let settings = get_settings(&self.app_handle);
         let cloud_result = if settings.transcription_provider == TranscriptionProvider::WisprFlow {
             self.stream_active.store(true, Ordering::Release);
-            Some(self.run_wispr_stream_worker(&rx))
+            Some(self.run_wispr_stream_worker(&rx, &cancelled))
         } else {
             CloudSttProvider::from_settings(&settings).map(|provider| {
                 self.stream_active.store(true, Ordering::Release);
-                self.run_cloud_stream_worker(&rx, provider)
+                self.run_cloud_stream_worker(&rx, provider, &cancelled)
             })
         };
         if let Some(result) = cloud_result {
