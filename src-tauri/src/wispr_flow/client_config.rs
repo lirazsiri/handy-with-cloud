@@ -1,4 +1,4 @@
-// Public transport configuration distributed with Wispr Flow 1.6.1174.
+// Supply service client settings through private build environment variables.
 // A signed account session is additionally required by the service.
 pub const MODEL_ID: &str = "v31pl413";
 pub const TRANSPORT_KEY: &str = match option_env!("HANDY_WISPR_TRANSPORT_KEY") {
