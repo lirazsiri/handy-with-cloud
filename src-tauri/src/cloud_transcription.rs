@@ -32,7 +32,7 @@ impl CloudSttProvider {
     pub(crate) fn from_settings(settings: &AppSettings) -> Option<Self> {
         match settings.transcription_provider {
             TranscriptionProvider::Local => None,
-            TranscriptionProvider::WarpWispr => None,
+            TranscriptionProvider::WarpWispr | TranscriptionProvider::WisprFlow => None,
             TranscriptionProvider::Cartesia => Some(Self::Cartesia),
             TranscriptionProvider::ElevenLabs => Some(Self::ElevenLabs),
         }

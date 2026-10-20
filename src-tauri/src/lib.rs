@@ -28,6 +28,7 @@ mod tray;
 mod tray_i18n;
 mod utils;
 mod warp_transcription;
+mod wispr_flow;
 
 pub use cli::CliArgs;
 #[cfg(debug_assertions)]
@@ -667,6 +668,9 @@ pub fn run(cli_args: CliArgs) {
             warp_transcription::check_warp_wispr_status,
             cloud_transcription::save_cloud_stt_api_key,
             cloud_transcription::check_cloud_stt_api_key,
+            wispr_flow::wispr_flow_session_status,
+            wispr_flow::sign_in_wispr_flow,
+            wispr_flow::check_wispr_flow_session,
             shortcut::change_overlay_position_setting,
             shortcut::change_overlay_style_setting,
             shortcut::change_debug_mode_setting,

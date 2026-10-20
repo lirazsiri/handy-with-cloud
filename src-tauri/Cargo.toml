@@ -49,7 +49,7 @@ base64 = "0.22"
 hound = "3.5.1"
 log = "0.4.25"
 env_filter = "0.1.0"
-tokio = "1.43.0"
+tokio = { version = "1.43.0", features = ["sync", "time", "macros"] }
 earshot = "1.2.2"
 enigo = "0.6.1"
 # Feedback sounds. No `recording`: microphone capture is handy-recorder's.
@@ -59,6 +59,10 @@ reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "d
 futures-util = "0.3"
 tungstenite = { version = "0.26", features = ["native-tls"] }
 url = "2"
+tonic = { version = "0.12.3", default-features = false, features = ["channel", "codegen", "prost", "tls-native-roots"] }
+prost = "0.13"
+tokio-stream = "0.1"
+uuid = { version = "1", features = ["v4"] }
 rustfft = "6.4.0"
 strsim = "0.11.0"
 natural = "0.5.0"
@@ -179,6 +183,8 @@ tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 
 [dev-dependencies]
+tonic = { version = "0.12.3", default-features = false, features = ["server"] }
+tokio-stream = { version = "0.1", features = ["net"] }
 tempfile = "3"
 # Test-only tokio features for the local socket servers exercising the
 # resumable HTTP downloader; normal builds keep the leaner feature set.

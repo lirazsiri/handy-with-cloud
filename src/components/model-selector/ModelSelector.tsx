@@ -226,6 +226,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
         `settings.general.transcriptionProvider.${
           {
             warp_wispr: "warpWispr",
+            wispr_flow: "wisprFlow",
             cartesia: "cartesia",
             eleven_labs: "elevenLabs",
           }[transcriptionProvider]

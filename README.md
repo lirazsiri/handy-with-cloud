@@ -493,3 +493,26 @@ Handy is open-source software, but the Handy name, logo, icon, and brand assets 
 - **Silero** for great lightweight VAD
 - **Tauri** team for the excellent Rust-based app framework
 - **Community contributors** helping make Handy better
+
+## Wispr Flow streaming
+
+In **General → Speech-to-text provider**, choose **Wispr Flow**, then click
+**Sign in to Wispr Flow**. Complete sign-in in your browser and return to Handy.
+The connection is checked before the new session replaces any saved session.
+Use **Check connection** to test the saved session.
+
+Wispr Flow receives audio while you record and returns formatted text when you
+stop. The normal shortcut, history, retry, and paste controls apply. Language
+selection and custom words are sent to Wispr. Local models, Warp Wispr,
+Cartesia, and ElevenLabs remain selectable.
+
+Handy keeps the account session outside ordinary settings and refreshes it
+when needed. Release builds on macOS use Keychain. Linux, Windows, and debug
+builds keep it in the app data directory as `wispr-flow-session.json`, with
+owner-only file permissions on Unix. Sign in again if Wispr revokes the session.
+
+This integration uses the desktop account protocol verified with Wispr Flow
+1.6.1174, including its shared client connection configuration. Audio goes over
+TLS to Wispr's Baseten gRPC deployment. It requires a Wispr Flow account rather
+than a developer API key. The private desktop protocol may require updates
+when Wispr changes its client.

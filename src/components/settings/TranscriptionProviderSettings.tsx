@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
 import { commands } from "@/bindings";
 
+import { WisprFlowSettings } from "./WisprFlowSettings";
+
 type HealthState =
   | { kind: "idle" }
   | { kind: "checking" }
@@ -91,6 +93,10 @@ export const TranscriptionProviderSettings: FC = () => {
               label: t("settings.general.transcriptionProvider.warpWispr"),
             },
             {
+              value: "wispr_flow",
+              label: t("settings.general.transcriptionProvider.wisprFlow"),
+            },
+            {
               value: "cartesia",
               label: t("settings.general.transcriptionProvider.cartesia"),
             },
@@ -111,6 +117,7 @@ export const TranscriptionProviderSettings: FC = () => {
           }
         />
       </SettingContainer>
+      {provider === "wispr_flow" && <WisprFlowSettings />}
       {(provider === "cartesia" || provider === "eleven_labs") && (
         <SettingContainer
           title={t("settings.general.transcriptionProvider.apiKeyTitle")}

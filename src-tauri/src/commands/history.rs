@@ -91,7 +91,9 @@ pub async fn retry_history_entry_transcription(
         )
         .await
         .map_err(|e| e.to_string())?,
-        TranscriptionProvider::Cartesia | TranscriptionProvider::ElevenLabs => {
+        TranscriptionProvider::Cartesia
+        | TranscriptionProvider::ElevenLabs
+        | TranscriptionProvider::WisprFlow => {
             let tm = Arc::clone(&transcription_manager);
             tauri::async_runtime::spawn_blocking(move || tm.transcribe_cloud_recording(samples))
                 .await

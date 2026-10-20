@@ -23,7 +23,7 @@ export const ModelSettingsCard: React.FC = () => {
   if (provider === "cartesia") return null;
   if (provider !== "local") {
     const service = t(
-      `settings.general.transcriptionProvider.${provider === "warp_wispr" ? "warpWispr" : "elevenLabs"}`,
+      `settings.general.transcriptionProvider.${provider === "warp_wispr" ? "warpWispr" : provider === "wispr_flow" ? "wisprFlow" : "elevenLabs"}`,
     );
     return (
       <SettingsGroup

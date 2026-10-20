@@ -444,13 +444,14 @@ impl ShortcutAction for TranscribeAction {
         // Use the app-facing model capability as the single pre-recording source
         // for live streaming decisions. Unknown support is represented as false
         // until the model registry is updated by discovery or runtime load.
-        let model_supports_streaming =
-            crate::cloud_transcription::CloudSttProvider::from_settings(&settings).is_some()
-                || settings.transcription_provider == TranscriptionProvider::Local
-                    && selected_model_info
-                        .as_ref()
-                        .map(|m| m.supports_streaming)
-                        .unwrap_or(false);
+        let model_supports_streaming = (settings.transcription_provider
+            == TranscriptionProvider::WisprFlow
+            || crate::cloud_transcription::CloudSttProvider::from_settings(&settings).is_some())
+            || settings.transcription_provider == TranscriptionProvider::Local
+                && selected_model_info
+                    .as_ref()
+                    .map(|m| m.supports_streaming)
+                    .unwrap_or(false);
         let vad_policy = if !settings.vad_enabled {
             VadPolicy::Disabled
         } else if model_supports_streaming {
@@ -676,7 +677,9 @@ impl ShortcutAction for TranscribeAction {
                             )
                             .await
                         }
-                        TranscriptionProvider::Cartesia | TranscriptionProvider::ElevenLabs => {
+                        TranscriptionProvider::Cartesia
+                        | TranscriptionProvider::ElevenLabs
+                        | TranscriptionProvider::WisprFlow => {
                             tm.finalize_stream().and_then(|text| {
                                 text.ok_or_else(|| {
                                     anyhow::anyhow!(

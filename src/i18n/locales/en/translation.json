@@ -130,7 +130,7 @@
       "transcriptionProvider": {
         "groupTitle": "Transcription",
         "title": "Speech-to-text provider",
-        "description": "Choose a local model, Warp Wispr, Cartesia, or ElevenLabs for speech-to-text.",
+        "description": "Choose a local model, Warp Wispr, Wispr Flow, Cartesia, or ElevenLabs for speech-to-text.",
         "local": "Local model",
         "warpWispr": "Warp Wispr",
         "credentialsFileTitle": "Warp credential source",
@@ -149,7 +149,21 @@
         "verifyAndSave": "Verify and save",
         "checkSavedKey": "Check saved key",
         "keySaved": "API key verified and saved.",
-        "keyVerified": "Saved API key verified."
+        "keyVerified": "Saved API key verified.",
+        "wisprFlow": "Wispr Flow",
+        "wisprSessionTitle": "Wispr Flow account",
+        "wisprSessionDescription": "Sign in with your Wispr Flow account in your browser. Audio streams while you speak; the formatted transcript arrives after you stop recording.",
+        "wisprSignIn": "Sign in to Wispr Flow",
+        "wisprCheck": "Check connection",
+        "wisprVerified": "Wispr Flow session verified with the streaming transcription service.",
+        "wisprStatus": {
+          "loading": "Checking saved session…",
+          "missing": "Sign in to connect your Wispr Flow account.",
+          "saved": "Session saved. Check the connection or sign in to another account.",
+          "signingIn": "Complete sign-in in your browser. Waiting for Wispr Flow…",
+          "checking": "Checking the streaming transcription service…",
+          "verified": "Connected to Wispr Flow."
+        }
       },
       "shortcut": {
         "title": "Handy Shortcuts",

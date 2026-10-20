@@ -13,6 +13,7 @@ use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::ModelManager;
 use crate::settings::{
     get_settings, AppSettings, ChineseScript, ModelUnloadTimeout, TranscribeAcceleratorSetting,
+    TranscriptionProvider,
 };
 use anyhow::Result;
 use chunked::ChunkedDecode;
@@ -747,9 +748,13 @@ impl TranscriptionManager {
         let (reply_tx, reply_rx) = mpsc::channel();
         tx.send(StreamCmd::CloudFinalize(reply_tx))?;
         let settings = get_settings(&self.app_handle);
-        let provider = CloudSttProvider::from_settings(&settings)
-            .ok_or_else(|| anyhow::anyhow!("No cloud provider selected"))?;
-        self.run_cloud_stream_worker(&rx, provider)?;
+        if settings.transcription_provider == TranscriptionProvider::WisprFlow {
+            self.run_wispr_stream_worker(&rx)?;
+        } else {
+            let provider = CloudSttProvider::from_settings(&settings)
+                .ok_or_else(|| anyhow::anyhow!("No cloud provider selected"))?;
+            self.run_cloud_stream_worker(&rx, provider)?;
+        }
         let result = reply_rx
             .recv()?
             .map_err(anyhow::Error::msg)?
@@ -1033,6 +1038,59 @@ impl TranscriptionManager {
         Ok(())
     }
 
+    fn run_wispr_stream_worker(&self, rx: &mpsc::Receiver<StreamCmd>) -> Result<()> {
+        let settings = get_settings(&self.app_handle);
+        tauri::async_runtime::block_on(async {
+            let credential = crate::wispr_flow::credential(&self.app_handle).await?;
+            let mut session = crate::wispr_flow::Session::connect(
+                &credential,
+                &settings.selected_language,
+                &settings.custom_words,
+            )
+            .await?;
+            loop {
+                match rx.try_recv() {
+                    Ok(StreamCmd::Feed(samples)) => session.feed(&samples)?,
+                    Ok(StreamCmd::CloudFinalize(reply)) => {
+                        let result = session
+                            .finish(|committed, tentative| {
+                                emit_stream_text(&self.app_handle, committed, tentative)
+                            })
+                            .await;
+                        let result = result.map(|text| {
+                            Some(FinalizedStreamText {
+                                text,
+                                output_language: if settings.selected_language == "auto" {
+                                    OutputLanguageEvidence::Unknown
+                                } else {
+                                    OutputLanguageEvidence::UserSelected(
+                                        settings.selected_language.clone(),
+                                    )
+                                },
+                                supported_languages: Vec::new(),
+                            })
+                        });
+                        let _ = reply.send(result.map_err(|e| e.to_string()));
+                        return Ok(());
+                    }
+                    Ok(StreamCmd::Finalize { .. }) => {
+                        anyhow::bail!("Recording provider changed; please record again")
+                    }
+                    Ok(StreamCmd::Cancel) | Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+                    Err(mpsc::TryRecvError::Empty) => {
+                        tokio::select! {
+                            response = session.next() => {
+                                let response = response?.ok_or_else(|| anyhow::anyhow!("Wispr Flow closed during recording."))?;
+                                crate::wispr_flow::emit_response(&response, &mut |committed, tentative| emit_stream_text(&self.app_handle, committed, tentative));
+                            }
+                            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+                        }
+                    }
+                }
+            }
+        })
+    }
+
     fn run_stream_worker(
         &self,
         rx: mpsc::Receiver<StreamCmd>,
@@ -1045,9 +1103,18 @@ impl TranscriptionManager {
             stream_active: Arc::clone(&self.stream_active),
         };
 
-        if let Some(provider) = CloudSttProvider::from_settings(&get_settings(&self.app_handle)) {
+        let settings = get_settings(&self.app_handle);
+        let cloud_result = if settings.transcription_provider == TranscriptionProvider::WisprFlow {
             self.stream_active.store(true, Ordering::Release);
-            if let Err(error) = self.run_cloud_stream_worker(&rx, provider) {
+            Some(self.run_wispr_stream_worker(&rx))
+        } else {
+            CloudSttProvider::from_settings(&settings).map(|provider| {
+                self.stream_active.store(true, Ordering::Release);
+                self.run_cloud_stream_worker(&rx, provider)
+            })
+        };
+        if let Some(result) = cloud_result {
+            if let Err(error) = result {
                 error!("Cloud transcription failed: {}", error);
                 // Keep the error available until stop/cancel, instead of falling back to a local model.
                 while let Ok(command) = rx.recv() {
