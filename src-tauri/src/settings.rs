@@ -345,6 +345,8 @@ pub enum TranscriptionProvider {
     #[default]
     Local,
     WarpWispr,
+    Cartesia,
+    ElevenLabs,
 }
 
 #[derive(Clone, Serialize, Deserialize, Type)]

@@ -220,9 +220,17 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     return modelStatus;
   };
 
-  if (transcriptionProvider === "warp_wispr") {
+  if (transcriptionProvider !== "local") {
     const displayText = t("modelSelector.hostedProvider", {
-      service: t("settings.general.transcriptionProvider.warpWispr"),
+      service: t(
+        `settings.general.transcriptionProvider.${
+          {
+            warp_wispr: "warpWispr",
+            cartesia: "cartesia",
+            eleven_labs: "elevenLabs",
+          }[transcriptionProvider]
+        }`,
+      ),
     });
 
     return (

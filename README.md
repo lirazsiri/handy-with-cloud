@@ -4,7 +4,7 @@
 
 **A free, open source, and extensible speech-to-text application that works completely offline.**
 
-Handy is a cross-platform desktop application that provides simple, privacy-focused speech transcription. Press a shortcut, speak, and have your words appear in any text field. This happens on your own computer without sending any information to the cloud.
+Handy is a cross-platform desktop application that provides simple, privacy-focused speech transcription. Press a shortcut, speak, and have your words appear in any text field. With the Local transcription service selected, this happens on your own computer without sending audio to the cloud.
 
 ## Why Handy?
 
@@ -12,7 +12,7 @@ Handy was created to fill the gap for a truly open source, extensible speech-to-
 
 - **Free**: Accessibility tooling belongs in everyone's hands, not behind a paywall
 - **Open Source**: Together we can build further. Extend Handy for yourself and contribute to something bigger
-- **Private**: Your voice stays on your computer. Get transcriptions without sending audio to the cloud
+- **Private**: With Local selected, your voice stays on your computer.
 - **Simple**: One tool, one job. Transcribe what you say and put it into a text box
 
 ## How It Works
@@ -22,13 +22,25 @@ Handy was created to fill the gap for a truly open source, extensible speech-to-
 3. **Release** and Handy processes your speech using Whisper
 4. **Get** your transcribed text pasted directly into whatever app you're using
 
-The process is entirely local:
+With Local selected:
 
 - Silence is filtered using VAD (Voice Activity Detection) with Silero
 - Transcription uses your choice of models:
   - **Whisper models** (Small/Medium/Turbo/Large) with GPU acceleration when available
   - **Parakeet V3** - CPU-optimized model with excellent performance and automatic language detection
 - Works on Windows, macOS, and Linux
+
+## Transcription services
+
+Choose a service in **Settings → General → Speech-to-text provider**:
+
+- **Local** uses downloaded models on your computer.
+- **Warp Wispr** uses your existing Warp credentials.
+- **Cartesia (Ink 2)** and **ElevenLabs (Scribe v2 Realtime)** stream audio to the selected service using your API key. Provider usage charges apply.
+
+For Cartesia or ElevenLabs, enter a key and click **Verify and save**. Handy sends one second of synthetic audio through the transcription model before saving. Failed verification preserves the saved key. **Check saved key** repeats this check with your current credential. On Linux, keys are stored in private files in Handy's application data directory; release builds on macOS use Keychain.
+
+ElevenLabs supports Auto Detect or an explicit language. Cartesia Ink 2 detects supported languages automatically. Both services work with the recording shortcut, streaming overlay, and history retries.
 
 ## Quick Start
 

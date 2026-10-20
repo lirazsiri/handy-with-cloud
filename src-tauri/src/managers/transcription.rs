@@ -4,6 +4,7 @@ use crate::audio_toolkit::{
     remove_filler_words, OutputLanguageEvidence,
 };
 use crate::chinese_script::{convert_chinese_script, ChineseVariety};
+use crate::cloud_transcription::*;
 use crate::engine_supervisor::{
     CancelMark, DeviceInfo, DeviceSelector, EngineError, EngineSupervisor, LoadSpec, LoadedInfo,
     Unloading,
@@ -28,10 +29,13 @@ use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_specta::Event;
 use transcribe_cpp::{Backend, RunOptions, Task, Transcript};
+use tungstenite::Message;
 
 mod chunked;
 mod live;
 pub mod policy;
+
+const STREAM_FINALIZE_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -94,6 +98,14 @@ pub struct StreamPhaseEvent {
 /// Commands sent to the streaming worker thread. Audio frames and the finalize
 /// request travel the same channel so FIFO ordering guarantees every fed frame
 /// is processed before finalize runs.
+type StreamReply = mpsc::Sender<std::result::Result<Option<FinalizedStreamText>, String>>;
+struct FinalizedStreamText {
+    text: String,
+    output_language: OutputLanguageEvidence,
+    /// The streaming model's supported languages, for text-based detection.
+    supported_languages: Vec<String>,
+}
+
 enum StreamCmd {
     Feed(Vec<f32>),
     /// Flush the live decode and reply with what it decoded, or `None` if
@@ -105,6 +117,7 @@ enum StreamCmd {
         reply: mpsc::Sender<StreamFinalizeReply>,
         samples: usize,
     },
+    CloudFinalize(StreamReply),
     Cancel,
 }
 
@@ -726,6 +739,67 @@ impl TranscriptionManager {
     /// worker idles until finalize/cancel and reports `None` so the caller
     /// falls back to batch transcription. Frames sent before the decode begins
     /// queue on the channel and are not lost.
+    pub fn transcribe_cloud_recording(&self, samples: Vec<f32>) -> Result<String> {
+        let (tx, rx) = mpsc::channel();
+        for chunk in samples.chunks(1600) {
+            tx.send(StreamCmd::Feed(chunk.to_vec()))?;
+        }
+        let (reply_tx, reply_rx) = mpsc::channel();
+        tx.send(StreamCmd::CloudFinalize(reply_tx))?;
+        let settings = get_settings(&self.app_handle);
+        let provider = CloudSttProvider::from_settings(&settings)
+            .ok_or_else(|| anyhow::anyhow!("No cloud provider selected"))?;
+        self.run_cloud_stream_worker(&rx, provider)?;
+        let result = reply_rx
+            .recv()?
+            .map_err(anyhow::Error::msg)?
+            .ok_or_else(|| anyhow::anyhow!("Cloud transcription did not complete"))?;
+        Ok(post_process_transcription_text(
+            result.text,
+            &settings,
+            false,
+            &result.output_language,
+            &result.supported_languages,
+        ))
+    }
+
+    pub fn finalize_stream(&self) -> Result<Option<String>> {
+        let Some(route) = self.router.take() else {
+            return Ok(None);
+        };
+        let (reply_tx, reply_rx) = mpsc::channel();
+        if route.tx.send(StreamCmd::CloudFinalize(reply_tx)).is_err() {
+            return Ok(None);
+        }
+        let finalized = match reply_rx.recv_timeout(STREAM_FINALIZE_REPLY_TIMEOUT) {
+            Ok(Ok(Some(finalized))) => finalized,
+            Ok(Err(error)) => return Err(anyhow::anyhow!(error)),
+            Ok(Ok(None)) => return Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.stream_active.store(false, Ordering::Release);
+                return Err(anyhow::anyhow!(
+                    "Timed out waiting {:?} for live transcription to finalize",
+                    STREAM_FINALIZE_REPLY_TIMEOUT
+                ));
+            }
+        };
+
+        let settings = get_settings(&self.app_handle);
+        // Streaming models do not receive a decode prompt, so custom words
+        // always go through the shared fuzzy post-correction path.
+        let filtered = post_process_transcription_text(
+            finalized.text,
+            &settings,
+            false,
+            &finalized.output_language,
+            &finalized.supported_languages,
+        );
+
+        self.maybe_unload_immediately("streaming transcription");
+        Ok(Some(filtered))
+    }
+
     pub fn start_stream(&self) {
         if self.router.is_open() || self.active_stream_worker.load(Ordering::Acquire) != 0 {
             warn!("start_stream called while a stream worker is already active");
@@ -747,6 +821,218 @@ impl TranscriptionManager {
         thread::spawn(move || manager.run_stream_worker(rx, cancelled, worker_id));
     }
 
+    fn handle_cloud_message(
+        &self,
+        provider: CloudSttProvider,
+        message: Message,
+        committed: &mut String,
+        tentative: &mut String,
+        commits_received: &mut usize,
+    ) -> Result<bool> {
+        if matches!(message, Message::Close(_)) {
+            anyhow::bail!("Cloud transcription connection closed before completion");
+        }
+        let Message::Text(text) = message else {
+            return Ok(false);
+        };
+        let event: serde_json::Value = serde_json::from_str(text.as_str())?;
+        let event_type = event
+            .get("type")
+            .or_else(|| event.get("message_type"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if let Some(detail) = cloud_event_error(&event) {
+            return Err(anyhow::anyhow!(detail));
+        }
+        match provider {
+            CloudSttProvider::Cartesia => match event_type {
+                "transcript" => {
+                    let text = event
+                        .get("text")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    if event.get("is_final").and_then(|value| value.as_bool()) == Some(true) {
+                        append_segment(committed, text, true);
+                        tentative.clear();
+                    } else {
+                        *tentative = text.to_string();
+                    }
+                    emit_stream_text(&self.app_handle, committed, tentative);
+                }
+                "flush_done" | "done" => return Ok(true),
+                _ => {}
+            },
+            CloudSttProvider::ElevenLabs => match event_type {
+                "partial_transcript" => {
+                    *tentative = event
+                        .get("text")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    emit_stream_text(&self.app_handle, committed, tentative);
+                }
+                "committed_transcript" => {
+                    append_segment(
+                        committed,
+                        event
+                            .get("text")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or(""),
+                        false,
+                    );
+                    tentative.clear();
+                    *commits_received += 1;
+                    emit_stream_text(&self.app_handle, committed, tentative);
+                }
+                _ => {}
+            },
+        }
+        Ok(false)
+    }
+
+    fn run_cloud_stream_worker(
+        &self,
+        rx: &mpsc::Receiver<StreamCmd>,
+        provider: CloudSttProvider,
+    ) -> Result<()> {
+        let settings = get_settings(&self.app_handle);
+        let key = provider.api_key(&self.app_handle)?;
+        let mut socket = connect_cloud_stt(provider, &settings, &key)?;
+        set_cloud_read_timeout(&mut socket, Duration::from_millis(2))?;
+        info!("Cloud streaming transcription started ({:?})", provider);
+
+        let mut committed = String::new();
+        let mut tentative = String::new();
+        let mut samples_sent = 0usize;
+        let mut next_commit = 20 * 16_000usize;
+        let mut commits_sent = 0usize;
+        let mut commits_received = 0usize;
+        let mut last_commit_samples = 0usize;
+
+        while let Ok(command) = rx.recv() {
+            match command {
+                StreamCmd::Feed(pcm) => {
+                    samples_sent += pcm.len();
+                    cloud_send_audio(&mut socket, provider, &pcm)?;
+                    if matches!(provider, CloudSttProvider::ElevenLabs)
+                        && samples_sent >= next_commit
+                    {
+                        eleven_commit(&mut socket)?;
+                        commits_sent += 1;
+                        last_commit_samples = samples_sent;
+                        next_commit += 20 * 16_000;
+                    }
+                    loop {
+                        match socket.read() {
+                            Ok(message) => {
+                                self.handle_cloud_message(
+                                    provider,
+                                    message,
+                                    &mut committed,
+                                    &mut tentative,
+                                    &mut commits_received,
+                                )?;
+                            }
+                            Err(tungstenite::Error::Io(error))
+                                if matches!(
+                                    error.kind(),
+                                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                                ) =>
+                            {
+                                break
+                            }
+                            Err(tungstenite::Error::ConnectionClosed) => {
+                                return Err(anyhow::anyhow!(
+                                    "cloud transcription connection closed"
+                                ));
+                            }
+                            Err(error) => return Err(error.into()),
+                        }
+                    }
+                }
+                StreamCmd::CloudFinalize(reply) => {
+                    let result = (|| -> Result<Option<FinalizedStreamText>> {
+                        match provider {
+                            CloudSttProvider::Cartesia => {
+                                socket.send(Message::Text("finalize".into()))?;
+                            }
+                            CloudSttProvider::ElevenLabs => {
+                                if samples_sent > last_commit_samples || commits_sent == 0 {
+                                    eleven_commit(&mut socket)?;
+                                    commits_sent += 1;
+                                }
+                            }
+                        }
+                        set_cloud_read_timeout(&mut socket, Duration::from_millis(200))?;
+                        let deadline = Instant::now() + Duration::from_secs(20);
+                        let mut completed = matches!(provider, CloudSttProvider::ElevenLabs)
+                            && commits_received >= commits_sent;
+                        while !completed && Instant::now() < deadline {
+                            match socket.read() {
+                                Ok(message) => {
+                                    let done = self.handle_cloud_message(
+                                        provider,
+                                        message,
+                                        &mut committed,
+                                        &mut tentative,
+                                        &mut commits_received,
+                                    )?;
+                                    if done
+                                        || (matches!(provider, CloudSttProvider::ElevenLabs)
+                                            && commits_received >= commits_sent)
+                                    {
+                                        completed = true;
+                                        break;
+                                    }
+                                }
+                                Err(tungstenite::Error::Io(error))
+                                    if matches!(
+                                        error.kind(),
+                                        std::io::ErrorKind::WouldBlock
+                                            | std::io::ErrorKind::TimedOut
+                                    ) =>
+                                {
+                                    continue
+                                }
+                                Err(tungstenite::Error::ConnectionClosed) => {
+                                    anyhow::bail!("Cloud transcription closed before completion")
+                                }
+                                Err(error) => return Err(error.into()),
+                            }
+                        }
+                        if !completed {
+                            anyhow::bail!("Timed out waiting for the cloud provider to finalize transcription");
+                        }
+                        let text = committed.trim().to_string();
+                        let language = if matches!(provider, CloudSttProvider::Cartesia)
+                            || settings.selected_language == "auto"
+                        {
+                            OutputLanguageEvidence::Unknown
+                        } else {
+                            OutputLanguageEvidence::UserSelected(settings.selected_language.clone())
+                        };
+                        Ok(Some(FinalizedStreamText {
+                            text,
+                            output_language: language,
+                            supported_languages: Vec::new(),
+                        }))
+                    })();
+                    let _ = reply.send(result.map_err(|e| e.to_string()));
+                    let _ = socket.close(None);
+                    return Ok(());
+                }
+                StreamCmd::Finalize { .. } => {
+                    anyhow::bail!("Recording provider changed; please record again")
+                }
+                StreamCmd::Cancel => {
+                    let _ = socket.close(None);
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn run_stream_worker(
         &self,
         rx: mpsc::Receiver<StreamCmd>,
@@ -758,6 +1044,26 @@ impl TranscriptionManager {
             active_stream_worker: Arc::clone(&self.active_stream_worker),
             stream_active: Arc::clone(&self.stream_active),
         };
+
+        if let Some(provider) = CloudSttProvider::from_settings(&get_settings(&self.app_handle)) {
+            self.stream_active.store(true, Ordering::Release);
+            if let Err(error) = self.run_cloud_stream_worker(&rx, provider) {
+                error!("Cloud transcription failed: {}", error);
+                // Keep the error available until stop/cancel, instead of falling back to a local model.
+                while let Ok(command) = rx.recv() {
+                    match command {
+                        StreamCmd::CloudFinalize(reply) => {
+                            let _ = reply.send(Err(error.to_string()));
+                            break;
+                        }
+                        StreamCmd::Cancel => break,
+                        StreamCmd::Feed(_) => {}
+                        StreamCmd::Finalize { .. } => break,
+                    }
+                }
+            }
+            return;
+        }
 
         // Wait for any in-progress model load to finish (start_stream races the
         // background load kicked off when recording starts).
@@ -820,6 +1126,11 @@ impl TranscriptionManager {
                     return;
                 }
                 // Dropping the session resets the worker's stream.
+                StreamCmd::CloudFinalize(reply) => {
+                    let _ =
+                        reply.send(Err("Recording provider changed; please record again".into()));
+                    return;
+                }
                 StreamCmd::Cancel => return,
             }
         }
@@ -1637,6 +1948,10 @@ fn drain_until_finalize(rx: mpsc::Receiver<StreamCmd>) {
             StreamCmd::Feed(_) => {}
             StreamCmd::Finalize { reply, .. } => {
                 let _ = reply.send(Ok(None));
+                break;
+            }
+            StreamCmd::CloudFinalize(reply) => {
+                let _ = reply.send(Err("Cloud stream is unavailable".into()));
                 break;
             }
             StreamCmd::Cancel => break,

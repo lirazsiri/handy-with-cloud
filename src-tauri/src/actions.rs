@@ -399,11 +399,11 @@ impl ShortcutAction for TranscribeAction {
         let settings = get_settings(app);
 
         // Load the local ASR model only when it owns transcription. VAD remains
-        // local for both providers so recording behavior stays unchanged.
+        // local for every provider so recording behavior stays unchanged.
         let kickoff_started = Instant::now();
         if settings.transcription_provider == TranscriptionProvider::Local {
             tm.initiate_model_load();
-        } else {
+        } else if settings.transcription_provider == TranscriptionProvider::WarpWispr {
             tm.cancel_stream();
         }
         let rm_clone = Arc::clone(&rm);
@@ -444,12 +444,13 @@ impl ShortcutAction for TranscribeAction {
         // Use the app-facing model capability as the single pre-recording source
         // for live streaming decisions. Unknown support is represented as false
         // until the model registry is updated by discovery or runtime load.
-        let model_supports_streaming = settings.transcription_provider
-            == TranscriptionProvider::Local
-            && selected_model_info
-                .as_ref()
-                .map(|m| m.supports_streaming)
-                .unwrap_or(false);
+        let model_supports_streaming =
+            crate::cloud_transcription::CloudSttProvider::from_settings(&settings).is_some()
+                || settings.transcription_provider == TranscriptionProvider::Local
+                    && selected_model_info
+                        .as_ref()
+                        .map(|m| m.supports_streaming)
+                        .unwrap_or(false);
         let vad_policy = if !settings.vad_enabled {
             VadPolicy::Disabled
         } else if model_supports_streaming {
@@ -464,8 +465,9 @@ impl ShortcutAction for TranscribeAction {
             streaming: model_supports_streaming,
             long_form: false,
         };
-        if settings.transcription_provider == TranscriptionProvider::Local
-            && live_decode(expected_model, settings.long_form_chunking) != LiveDecode::None
+        if crate::cloud_transcription::CloudSttProvider::from_settings(&settings).is_some()
+            || settings.transcription_provider == TranscriptionProvider::Local
+                && live_decode(expected_model, settings.long_form_chunking) != LiveDecode::None
         {
             tm.start_stream();
         }
@@ -673,6 +675,15 @@ impl ShortcutAction for TranscribeAction {
                                 &transcription_settings.selected_language,
                             )
                             .await
+                        }
+                        TranscriptionProvider::Cartesia | TranscriptionProvider::ElevenLabs => {
+                            tm.finalize_stream().and_then(|text| {
+                                text.ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                    "Cloud transcription stream is unavailable; please record again"
+                                )
+                                })
+                            })
                         }
                         TranscriptionProvider::Local => {
                             tm.initiate_model_load();

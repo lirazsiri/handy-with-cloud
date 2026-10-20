@@ -8,6 +8,7 @@ mod catalog;
 mod chinese_script;
 pub mod cli;
 mod clipboard;
+mod cloud_transcription;
 mod commands;
 pub mod engine_supervisor;
 mod helpers;
@@ -664,6 +665,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_transcription_provider_setting,
             shortcut::change_warp_credentials_file_setting,
             warp_transcription::check_warp_wispr_status,
+            cloud_transcription::save_cloud_stt_api_key,
+            cloud_transcription::check_cloud_stt_api_key,
             shortcut::change_overlay_position_setting,
             shortcut::change_overlay_style_setting,
             shortcut::change_debug_mode_setting,

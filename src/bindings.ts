@@ -5,6 +5,23 @@
 
 
 export const commands = {
+async saveCloudSttApiKey(provider: string, apiKey: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_cloud_stt_api_key", { provider, apiKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
+async checkCloudSttApiKey(provider: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_cloud_stt_api_key", { provider }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
+
 async changeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_binding", { id, binding }) };
@@ -1254,7 +1271,7 @@ export type StreamWorkKind = "transcribing" | "polishing"
  */
 export type Theme = "system" | "light" | "dark"
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
-export type TranscriptionProvider = "local" | "warp_wispr"
+export type TranscriptionProvider = "local" | "warp_wispr" | "cartesia" | "eleven_labs"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type VadBackend = "silero" | "earshot"
 export type WarpWisprStatus = { active: boolean; credential_source: string; latency_ms: number }
