@@ -314,11 +314,7 @@ impl Session {
         words: &[String],
     ) -> Result<Self> {
         let init = init_request(credential, language, words)?;
-        let host = format!(
-            "https://model-{}.grpc.api.baseten.co",
-            client_config::MODEL_ID
-        );
-        let channel = Endpoint::from_shared(host)?
+        let channel = Endpoint::from_static(client_config::TRANSCRIPTION_URL)
             .connect_timeout(Duration::from_secs(5))
             .tls_config(ClientTlsConfig::new().with_native_roots())?
             .connect()
