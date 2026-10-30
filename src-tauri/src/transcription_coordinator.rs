@@ -170,6 +170,7 @@ enum Effect {
 /// Commands processed sequentially by the coordinator thread.
 enum Command {
     Input(InputEvent),
+    Stop,
     Cancel { recording_was_active: bool },
     ProcessingFinished,
 }
@@ -458,6 +459,15 @@ impl CoordinatorState {
         None
     }
 
+    fn on_stop(&mut self) -> Option<Effect> {
+        self.pending_release = None;
+        self.pending_press = None;
+        let Stage::Recording(binding_id) = &self.stage else {
+            return None;
+        };
+        Some(self.begin_processing(binding_id.clone(), "CLI".into()))
+    }
+
     fn on_cancel(&mut self, recording_was_active: bool) {
         self.pending_release = None;
         // An explicit cancel abandons any remembered start too — the user
@@ -571,6 +581,11 @@ impl TranscriptionCoordinator {
                                 run_effect(&app, &mut state, effect);
                             }
                         }
+                        Command::Stop => {
+                            if let Some(effect) = state.on_stop() {
+                                run_effect(&app, &mut state, effect);
+                            }
+                        }
                         Command::Cancel {
                             recording_was_active,
                         } => state.on_cancel(recording_was_active),
@@ -649,6 +664,13 @@ impl TranscriptionCoordinator {
         }
     }
 
+    /// Finish the active recording, preserving its transcription mode.
+    pub fn stop_recording(&self) {
+        if self.tx.send(Command::Stop).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
     pub fn notify_cancel(&self, recording_was_active: bool) {
         if self
             .tx
@@ -712,6 +734,76 @@ fn stop(app: &AppHandle, binding_id: &str, hotkey_string: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_finishes_either_binding_in_every_activation_mode_once() {
+        for binding in ["transcribe", "transcribe_with_post_process"] {
+            for mode in [
+                ShortcutActivation::Toggle,
+                ShortcutActivation::PushToTalk,
+                ShortcutActivation::HoldOrToggle,
+            ] {
+                let mut state = CoordinatorState::new();
+                let now = Instant::now();
+                state.on_input(
+                    InputEvent {
+                        binding_id: binding.into(),
+                        hotkey_string: "Fn".into(),
+                        is_pressed: true,
+                        mode,
+                        hold_threshold: Duration::from_millis(200),
+                        external: false,
+                    },
+                    now,
+                );
+                assert_eq!(
+                    state.on_stop(),
+                    Some(Effect::Stop {
+                        binding_id: binding.into(),
+                        hotkey_string: "CLI".into()
+                    })
+                );
+                assert_eq!(state.stage, Stage::Processing);
+                assert!(state.on_stop().is_none());
+                assert!(state.on_processing_finished().is_none());
+                assert_eq!(state.stage, Stage::Idle);
+                assert!(state.on_stop().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn stop_clears_deferred_release_and_queued_recording_without_cancelling_processing() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        state.on_input(toggle_input(true), now);
+        state.on_stop();
+        state.on_input(toggle_input(true), now);
+        assert!(state.pending_press.is_some());
+        assert!(state.on_stop().is_none());
+        assert_eq!(state.stage, Stage::Processing);
+        assert!(state.on_processing_finished().is_none());
+
+        state.on_input(
+            InputEvent {
+                mode: ShortcutActivation::PushToTalk,
+                ..toggle_input(true)
+            },
+            now,
+        );
+        state.on_input(
+            InputEvent {
+                mode: ShortcutActivation::PushToTalk,
+                is_pressed: false,
+                ..toggle_input(true)
+            },
+            now,
+        );
+        assert!(state.pending_release.is_some());
+        assert!(matches!(state.on_stop(), Some(Effect::Stop { .. })));
+        assert!(state.grace_deadline().is_none());
+        assert!(state.on_grace_expired().is_none());
+    }
 
     #[test]
     fn push_to_talk_release_while_recording_defers_release() {

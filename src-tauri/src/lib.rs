@@ -865,7 +865,11 @@ pub fn run(cli_args: CliArgs) {
     // instance instead.
     if !headless_mode {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if args.iter().any(|a| a == "--toggle-transcription") {
+            if args.iter().any(|a| a == "--stop-transcription") {
+                if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+                    coordinator.stop_recording();
+                }
+            } else if args.iter().any(|a| a == "--toggle-transcription") {
                 signal_handle::send_transcription_input(app, "transcribe", "CLI");
             } else if args.iter().any(|a| a == "--toggle-post-process") {
                 signal_handle::send_transcription_input(app, "transcribe_with_post_process", "CLI");

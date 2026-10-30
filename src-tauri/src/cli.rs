@@ -20,6 +20,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub toggle_post_process: bool,
 
+    /// Stop the active recording and transcribe it (sent to running instance)
+    #[arg(long)]
+    pub stop_transcription: bool,
+
     /// Cancel the current operation (sent to running instance)
     #[arg(long)]
     pub cancel: bool,

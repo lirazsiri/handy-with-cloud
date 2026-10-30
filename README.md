@@ -110,8 +110,14 @@ Handy supports command-line flags for controlling a running instance and customi
 ```bash
 handy --toggle-transcription    # Toggle recording on/off
 handy --toggle-post-process     # Toggle recording with post-processing on/off
+handy --stop-transcription      # Stop recording and transcribe what was captured
 handy --cancel                  # Cancel the current operation
 ```
+
+For a screen-lock hook, use `handy --stop-transcription`. It finishes the active
+recording using its original transcription or post-processing mode. When idle or
+already processing, it leaves the current transcription intact. It also clears
+any queued recording start.
 
 **Startup flags:**
 
